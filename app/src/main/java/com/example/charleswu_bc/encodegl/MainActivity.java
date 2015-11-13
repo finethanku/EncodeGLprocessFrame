@@ -6,224 +6,182 @@ package com.example.charleswu_bc.encodegl;
 import android.app.Activity;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
-import android.media.MediaCodecList;
-import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.opengl.GLES20;
+import android.opengl.GLSurfaceView;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
-import android.view.SurfaceView;
 
 import java.io.FileOutputStream;
 import java.nio.ByteBuffer;
 
-public class MainActivity extends Activity implements SurfaceHolder.Callback{
-    Codec decoder;
-    @Override
-    public void surfaceCreated(SurfaceHolder holder) {
+import javax.microedition.khronos.egl.EGL10;
+import javax.microedition.khronos.egl.EGLDisplay;
+import javax.microedition.khronos.egl.EGLConfig;
+import javax.microedition.khronos.egl.EGLContext;
+import javax.microedition.khronos.egl.EGLSurface;
+import javax.microedition.khronos.opengles.GL10;
+
+public class MainActivity extends Activity implements GLSurfaceView.Renderer{
+    private MediaCodec mcencoder;
+    private Surface encodeSurface;
+    private EGLSurface eglencodeSurface;
+    private GLSurfaceView glsurfaceView;
+    private EGLSurface eglpreviewSurface;
+    public FileOutputStream fos;
+
+    private EGLContext eglContext;
+    private SampleContextFactory sampleContextFactory;
+    private SampleWindowSurfaceFactory sampleWindowSurfaceFactory;
+
+    private int cnt = 0;
+    public void onSurfaceCreated(GL10 unused, EGLConfig config)
+    {}
+
+    public void onDrawFrame(GL10 gl10)
+    {
+        EGL10 egl10 = (EGL10)EGLContext.getEGL();
+
+        egl10.eglMakeCurrent(egl10.eglGetDisplay(EGL10.EGL_DEFAULT_DISPLAY),
+                eglencodeSurface, eglencodeSurface,eglContext );
+
+
+        cnt++;
+        int r = 0;
+        int g = 0;
+        int b = cnt*10%200+50; //r
+        GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
+        GLES20.glClearColor(r / 255.0f, g / 255.0f, b / 255.0f, 1.0f);
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+        GLES20.glEnable(GLES20.GL_SCISSOR_TEST);
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+        try {
+            Thread.sleep(100);
+        }catch (Exception e){}
+
+        egl10.eglSwapBuffers(egl10.eglGetDisplay(EGL10.EGL_DEFAULT_DISPLAY), eglencodeSurface);
+
+
+        egl10.eglMakeCurrent(egl10.eglGetDisplay(EGL10.EGL_DEFAULT_DISPLAY),
+                eglpreviewSurface, eglpreviewSurface, eglContext);
+
+        GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
+        GLES20.glClearColor(r / 255.0f, g / 255.0f, b / 255.0f, 1.0f);
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+        GLES20.glEnable(GLES20.GL_SCISSOR_TEST);
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+        try {
+            Thread.sleep(100);
+        }catch (Exception e){}
+
+        run_encode();
     }
 
-    @Override
-    public void surfaceDestroyed(SurfaceHolder holder) {
+    public void onSurfaceChanged(GL10 unused, int width, int height)
+    {
     }
 
-    @Override
-    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-        decoder = new Codec(holder.getSurface() , "/mnt/usbdisk/usb-disk1/15_720p.mp4");
-        decoder.start();
-
-    }
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        SurfaceView surfaceView = new SurfaceView(this);
-        surfaceView.getHolder().addCallback(this);
-        setContentView(surfaceView);
 
+        mcencoder = encoder_setup();
+        encodeSurface = mcencoder.createInputSurface();
+        mcencoder.start();
+
+        glsurfaceView = new GLSurfaceView(this);
+        glSetup(glsurfaceView);
+        try {
+            fos = new FileOutputStream("/mnt/sata/try.mp4", false);
+        }catch (Exception e){}
+        setContentView(glsurfaceView);
     }
 
-    public class Codec extends Thread{
-        private MediaCodec mcdecoder;
-        private MediaExtractor extractor;
-        private Surface surface;
-        private String url;
-        private Encode encoder;
-        private ByteBuffer outputBuffer;
-        public FileOutputStream fos;
-
-        private int gl_cnt = 0;
-
-        public Codec(Surface surface, String url) {
-            this.surface = surface;
-            this.url = url;
-            try {
-                fos = new FileOutputStream("/mnt/sata/try.mp4",false);
-            }catch (Exception e){};
-            encoder = new Encode(fos,surface);
-        }
-        @Override
-        public void run(){
-            extractor = new MediaExtractor();
-            try {
-                extractor.setDataSource(url);
-            } catch (Exception e) {
-            };
-
-            for (int i = 0; i < extractor.getTrackCount(); ++i) {
-                MediaFormat format = extractor.getTrackFormat(i);
-                String mime = format.getString(MediaFormat.KEY_MIME);
-                if (mime.startsWith("video/")) {
-                    extractor.selectTrack(i);
-                    try {
-                        mcdecoder = MediaCodec.createDecoderByType(mime);
-                    } catch (Exception e) {}
-                    mcdecoder.configure(format, null, null, 0);
-                }
-            }
-            mcdecoder.start();
-
-            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-            boolean isEOS = false;
-            long startMs = System.currentTimeMillis();
-            ByteBuffer inputBuffer;
-            do {
-                int inIdx = mcdecoder.dequeueInputBuffer(10000);
-                if (inIdx >= 0) {
-                    inputBuffer = mcdecoder.getInputBuffers()[inIdx];
-                    int sampleSize = extractor.readSampleData(inputBuffer, 0) < 0 ? 0 : extractor.readSampleData(inputBuffer, 0);
-                    if(sampleSize == 0) {
-                        mcdecoder.queueInputBuffer(inIdx, 0, sampleSize,0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
-                        isEOS = true;
-                    }
-                    else{
-                        mcdecoder.queueInputBuffer(inIdx, 0, sampleSize, extractor.getSampleTime(), 0);
-                        extractor.advance();
-                    }
-                }
-
-                int outIdx = mcdecoder.dequeueOutputBuffer(info, 10000);
-                if (outIdx < 0) continue;
-                outputBuffer = mcdecoder.getOutputBuffers()[outIdx];
-
-                // We use a very simple clock to keep the video FPS, or the video
-                // playback will be too fast
-                while (info.presentationTimeUs / 1000 > System.currentTimeMillis() - startMs) {
-                    try {
-                        sleep(10);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                        break;
-                    }
-                }
-
-                mcdecoder.releaseOutputBuffer(outIdx, true);
-                encoder.run_GLencode(gl_cnt++);
-                if(outputBuffer != null) {
-//                    encoder.run_encode(outputBuffer);
-
-                }
-
-            } while (!isEOS);
-            mcdecoder.stop();
-            mcdecoder.release();
-            extractor.release();
-            try {
-                fos.close();
-            }catch (Exception e){};
-
-        }
-
+    @Override
+    protected void onDestroy(){
+        super.onDestroy();
+        mcencoder.stop();
+        mcencoder.release();
+        try {
+            fos.close();
+        }catch (Exception e){}
     }
 
-    private class Encode{
-        public MediaCodec mcencoder;
-        public FileOutputStream fos;
+    private void glSetup(GLSurfaceView glSurfaceView){
+        glSurfaceView.setEGLContextClientVersion(2);
+        glSurfaceView.setPreserveEGLContextOnPause(true);
 
-        private InputSurface inputSurface;
+        sampleContextFactory = new SampleContextFactory();
+        glSurfaceView.setEGLContextFactory(sampleContextFactory);
+        sampleWindowSurfaceFactory = new SampleWindowSurfaceFactory();
+        glSurfaceView.setEGLWindowSurfaceFactory(sampleWindowSurfaceFactory);
+        glSurfaceView.setRenderer(this);
+    }
 
-        public Encode(FileOutputStream fos,Surface surface){
-            this.fos = fos;
+    private MediaCodec encoder_setup(){
+        try {
+            mcencoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+        }catch (Exception e){e.printStackTrace();}
+        MediaFormat mediaFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, 1280, 720);
+        mediaFormat.setInteger(MediaFormat.KEY_BIT_RATE, 6000000);
+        mediaFormat.setInteger(MediaFormat.KEY_FRAME_RATE, 24);
+        mediaFormat.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
+        mediaFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 10);
+
+        mcencoder.configure(mediaFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+        return mcencoder;
+    }
+
+    private void run_encode(){
+        MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
+        int outputBufferIdx = mcencoder.dequeueOutputBuffer(bufferInfo,10000);
+        if(outputBufferIdx >= 0){
+            ByteBuffer outBuffer = mcencoder.getOutputBuffers()[outputBufferIdx];
+
+            byte[] outData = new byte[bufferInfo.size];
+            outBuffer.get(outData);
             try {
-                mcencoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
-            }catch (Exception e){
-                e.printStackTrace();
-            };
-            MediaFormat mediaFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, 1280, 720);
-            mediaFormat.setInteger(MediaFormat.KEY_BIT_RATE, 6000000/*125000*/);
-            mediaFormat.setInteger(MediaFormat.KEY_FRAME_RATE, 24);
-            mediaFormat.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
-            mediaFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 10);
+                fos.write(outData, bufferInfo.offset, outData.length - bufferInfo.offset);
+                fos.flush();
+                mcencoder.releaseOutputBuffer(outputBufferIdx,false);
+            }catch (Exception e){};
+        }
+    }
 
-            mcencoder.configure(mediaFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
-            inputSurface = new InputSurface(mcencoder.createInputSurface()); //
+    private class SampleContextFactory implements GLSurfaceView.EGLContextFactory {
+        private int EGL_CONTEXT_CLIENT_VERSION = 0x3098;
 
-            mcencoder.start();
+        public EGLContext createContext(EGL10 egl, EGLDisplay display, EGLConfig config) {
+            int[] attr_list = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL10.EGL_NONE };
 
+            eglContext = egl.eglCreateContext(display, config, EGL10.EGL_NO_CONTEXT, attr_list);
+            return eglContext;
         }
 
-        public void run_GLencode(int frameIndex){
-            int color1 = frameIndex*10%100+100;
-            int color2 = frameIndex*10%100+100;
-            int color3 = frameIndex*10%100+150;
-            GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
-            GLES20.glClearColor(color1/255.0f, color2/255.0f, color3/255.0f, 1.0f);
-            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
-            GLES20.glEnable(GLES20.GL_SCISSOR_TEST);
-            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
-            inputSurface.makeCurrent();
-            inputSurface.setPresentationTime(frameIndex * 2000);
-            inputSurface.swapBuffers();
+        public void destroyContext(EGL10 egl, EGLDisplay display,EGLContext context)
+        {}
+    }
 
-
-            MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
-            int outputBufferIdx = mcencoder.dequeueOutputBuffer(bufferInfo,10000);
-            if(outputBufferIdx >= 0){
-                ByteBuffer outBuffer = mcencoder.getOutputBuffers()[outputBufferIdx];
-
-                byte[] outData = new byte[bufferInfo.size];
-                outBuffer.get(outData);
-                try {
-                    fos.write(outData, bufferInfo.offset, outData.length - bufferInfo.offset);
-                    fos.flush();
-                    mcencoder.releaseOutputBuffer(outputBufferIdx,false);
-                }catch (Exception e){};
+    private class SampleWindowSurfaceFactory implements GLSurfaceView.EGLWindowSurfaceFactory {
+        private final String TAG = this.getClass().getName();
+        public EGLSurface createWindowSurface(EGL10 egl, EGLDisplay display,
+                                              EGLConfig config, Object nativeWindow) {
+            EGLSurface result = null;
+            try {
+                eglpreviewSurface = egl.eglCreateWindowSurface(display, config, nativeWindow, null);
+                eglencodeSurface = egl.eglCreateWindowSurface(display, config, encodeSurface, null);
+            } catch (IllegalArgumentException e) {
+                Log.e(TAG, "eglCreateWindowSurface (native)", e);
             }
-
+            // this return will triger Renderer
+            result = eglpreviewSurface;
+            return result;
         }
 
-
-
-        public void run_encode(ByteBuffer outputBuffer){
-            byte [] data = new byte[1280*720*3/2];
-            outputBuffer.get(data,0,1280*720*3/2);
-
-            int inputBufferIdx = mcencoder.dequeueInputBuffer(0);
-            if(inputBufferIdx >=0) {
-                ByteBuffer inputBuffer = mcencoder.getInputBuffers()[inputBufferIdx];
-                inputBuffer.clear();
-                inputBuffer.put(data);
-                mcencoder.queueInputBuffer(inputBufferIdx, 0, data.length, 0, 0);
-            }
-            else{
-                return;
-            }
-
-            MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
-            int outputBufferIdx = mcencoder.dequeueOutputBuffer(bufferInfo,0);
-            if(outputBufferIdx >= 0){
-                ByteBuffer outBuffer = mcencoder.getOutputBuffers()[outputBufferIdx];
-
-                byte[] outData = new byte[bufferInfo.size];
-                outBuffer.get(outData);
-                try {
-                    fos.write(outData, bufferInfo.offset, outData.length - bufferInfo.offset);
-                    fos.flush();
-                    mcencoder.releaseOutputBuffer(outputBufferIdx,false);
-//                        outputBufferIdx = mcencoder.dequeueOutputBuffer(bufferInfo,0);
-                }catch (Exception e){};
-            }
+        public void destroySurface(EGL10 egl, EGLDisplay display, EGLSurface surface) {
+            egl.eglDestroySurface(display, surface);
         }
     }
 }
